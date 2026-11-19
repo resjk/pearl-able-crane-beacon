@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Cormorant Garamond", Georgia, serif;
+  --font-sans: "Manrope", system-ui, sans-serif;
+  --color-ink: #1c140f;
+  --color-panel: #2a211b;
+  --color-panel-2: #3a2e26;
+  --color-line: #5c4638;
+  --color-parchment: #f4e7d4;
+  --color-muted: #cbbba6;
+  --color-gold: #e0b15a;
+  --color-gold-deep: #a87832;
+  --color-blood: #c4493a;
+  --color-ice: #2f6fe4;
+  --color-light-sq: #f0d9b5;
+  --color-dark-sq: #b58863;
+  --color-move: #6d7a4e;
+  --radius-card: 1rem;
+}
+
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  html,
+  body {
+    background: var(--color-ink);
+    color: var(--color-parchment);
+    font-family: var(--font-sans);
+  }
+}
+
+@keyframes check-pop {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.86);
+  }
+  12% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.04);
+  }
+}
+
+.check-pop {
+  animation: check-pop 1.15s ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .check-pop {
+    animation: none;
+    opacity: 0.9;
+  }
+}

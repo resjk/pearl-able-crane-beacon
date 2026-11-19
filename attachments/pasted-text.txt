@@ -1,0 +1,1047 @@
+import pygame
+import sys
+import os
+import random
+import time
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# ==========================================
+# 1. ЖЕСТКИЕ НАСТРОЙКИ ПОД 1920x1080
+# ==========================================
+SCREEN_W, SCREEN_H = 1920, 1080
+CELL_SIZE = 100
+BOARD_SIZE = 8
+
+BOARD_X = 560
+BOARD_Y = 140
+BOARD_W = CELL_SIZE * BOARD_SIZE
+BOARD_H = CELL_SIZE * BOARD_SIZE
+
+BOOK_X = BOARD_X + BOARD_W + 40
+BOOK_Y = BOARD_Y + 300
+BOOK_W = 100
+BOOK_H = 100
+
+PANEL_X = SCREEN_W - 320
+PANEL_Y = 100
+PANEL_W = 315
+PANEL_H = 800
+
+# Цвета
+LIGHT = (240, 217, 181)
+DARK  = (181, 136, 99)
+HIGHLIGHT_SELECTED = (100, 200, 100)
+HIGHLIGHT_MOVE = (130, 130, 130, 100)
+
+BG_COLOR = (30, 30, 30)
+TEXT_COLOR = (255, 255, 255)
+PANEL_COLOR = (50, 50, 50)
+BTN_COLOR = (70, 130, 180)
+BTN_HOVER = (100, 160, 210)
+BTN_DISABLED = (60, 60, 60)
+
+ARMOR_SPAWN_TIME = 300
+BOMB_SPAWN_TIME = 600
+
+IMAGES = {}
+
+STATE_MENU = "menu"
+STATE_PLAYING = "playing"
+STATE_GAME_OVER = "game_over"
+STATE_PROMOTION = "promotion"
+
+# Список способностей (теперь с русскими названиями и описаниями)
+ALL_SPELLS = [
+    ("瞬", "teleport", "Телепорт — выберите 2 точки, сквозь которые можно ходить, но нельзя стоять на них."),
+    ("弹", "give_projectile", "Снаряд — дает фигуре красный снаряд, атакующий как ферзь, но фигура не двигается."),
+    ("杀", "kill_any", "Убийство — мгновенно уничтожает любую фигуру на доске, кроме короля."),
+    ("换", "swap", "Замена — меняет местами две любые фигуры, кроме королей. Если ваш король окажется под шахом, замена отменяется."),
+    ("时", "rewind", "Время — откатывает игру на 3 хода назад."),
+    ("攻", "pawn_rush", "Пешечное нашествие — ваши пешки навсегда получают возможность ходить на 2 клетки вперед."),
+    ("酷", "cruel_pawns", "Жестокие — ваши пешки начинают ходить по диагонали вперед и атаковать 3 клетки перед собой."),
+    ("和", "peaceful_pawns", "Мирные — ваши пешки больше не могут атаковать, только ходить вперед."),
+    ("炸", "bombard_row", "Бомбардировка — уничтожает выбранную горизонталь, кроме клеток с королями (ПВО)."),
+    ("列", "bombard_col", "Бомбардировка 2 — уничтожает выбранную вертикаль, кроме клеток с королями (ПВО)."),
+    ("冻", "freeze", "Заморозка — замораживает область 3x3 на 2 хода. Замороженные фигуры не могут ходить."),
+    ("爆", "bomb", "Бомба — уничтожает все фигуры в области 3x3, кроме королей (ПВО)."),
+    ("运", "fortune", "Фортуна — с шансом 50% вы получаете копию выбранной фигуры на свободной клетке. Если не повезло, фигура погибает."),
+    ("无", "nothing", "Ничего — просто пропускает ход."),
+    ("幻", "trip", "Нарко-трип — доска окрашивается в случайные цвета, буквы и цифры меняют порядок."),
+    ("叛", "betrayal", "Измена — ваш ферзь предает короля и уходит с доски."),
+    ("友", "friendship", "Дружба — немедленная ничья."),
+    ("盲", "blindness", "Слепота — все фигуры становятся невидимыми на 2 хода."),
+    ("金", "gold", "Золото — дает фигуре золотой снаряд. При выстреле он дает щит цели (можно стрелять по своим)."),
+    ("汗", "genghis", "Чингисхан — все ваши фигуры, кроме короля, становятся конями.")
+]
+
+def load_images(cell_size):
+    path = os.path.join(BASE_DIR, "assets", "pieces")
+    if not os.path.exists(path): return
+    for filename in os.listdir(path):
+        if filename.endswith(".png"):
+            piece_name = filename[:-4]
+            try:
+                img = pygame.image.load(os.path.join(path, filename))
+                img = img.convert_alpha()
+                bg_color = img.get_at((0, 0))
+                img.set_colorkey(bg_color)
+                img = pygame.transform.scale(img, (cell_size, cell_size))
+                IMAGES[piece_name] = img
+            except Exception:
+                pass
+
+def get_cjk_font(size, bold=False):
+    candidates = ["notosanscjksc", "notosanscjk", "notosansmonocjksc", "wenquanyizenhei", "wenquanyimicrohei", "microsoftyahei", "simsun", "simhei", "arialunicodems"]
+    for name in candidates:
+        path = pygame.font.match_font(name, bold=bold)
+        if path: return pygame.font.Font(path, size)
+    return pygame.font.SysFont("Arial", size, bold=bold)
+
+def make_start_board():
+    board = [[None]*8 for _ in range(8)]
+    back_rank = ["R","N","B","Q","K","B","N","R"]
+    for c in range(8):
+        board[0][c] = {"type": "b" + back_rank[c], "armor": 0, "projectile": False, "gold_projectile": False, "moved": False, "frozen": 0}
+        board[1][c] = {"type": "bP", "armor": 0, "projectile": False, "gold_projectile": False, "moved": False, "frozen": 0}
+        board[6][c] = {"type": "wP", "armor": 0, "projectile": False, "gold_projectile": False, "moved": False, "frozen": 0}
+        board[7][c] = {"type": "w" + back_rank[c], "armor": 0, "projectile": False, "gold_projectile": False, "moved": False, "frozen": 0}
+    return board
+
+def copy_board(board):
+    return [[cell.copy() if cell else None for cell in row] for row in board]
+
+def find_king(board, color):
+    for r in range(8):
+        for c in range(8):
+            if board[r][c] and board[r][c]["type"] == color + "K":
+                return r, c
+    return None
+
+# ==========================================
+# 3. ЛОГИКА
+# ==========================================
+def is_valid_move(board, from_r, from_c, to_r, to_c, last_move=None, buffs=None, teleports=None):
+    piece = board[from_r][from_c]
+    if piece is None: return False
+    color = piece["type"][0]
+    piece_type = piece["type"][1:]
+    target = board[to_r][to_c]
+    
+    if target is not None and target["type"][0] == color:
+        if not (piece.get("gold_projectile") and target is not None):
+            return False
+    if from_r == to_r and from_c == to_c: return False
+    if teleports and (to_r, to_c) in teleports: return False
+    
+    dr = to_r - from_r
+    dc = to_c - from_c
+    
+    if piece.get("projectile", False) or piece.get("gold_projectile", False):
+        if dr != 0 and dc != 0 and abs(dr) != abs(dc): return False
+        step_r = (dr > 0) - (dr < 0); step_c = (dc > 0) - (dc < 0)
+        curr_r, curr_c = from_r + step_r, from_c + step_c
+        while (curr_r, curr_c) != (to_r, to_c):
+            if board[curr_r][curr_c] is not None: return False
+            curr_r += step_r; curr_c += step_c
+        return True
+
+    if piece_type == "K":
+        if abs(dr) <= 1 and abs(dc) <= 1:
+            if target is not None and target.get("armor", 0) > 0: return False
+            return True
+        if dc == 2 and dr == 0 and not piece["moved"]:
+            rook = board[from_r][7]
+            if rook and rook["type"] == color + "R" and not rook["moved"]:
+                if all(board[from_r][c] is None for c in range(from_c + 1, 7)):
+                    if not is_king_in_check(board, color, buffs):
+                        temp_board = copy_board(board); temp_board[from_r][from_c + 1] = temp_board[from_r][from_c]; temp_board[from_r][from_c] = None
+                        if not is_king_in_check(temp_board, color, buffs): return True
+        if dc == -2 and dr == 0 and not piece["moved"]:
+            rook = board[from_r][0]
+            if rook and rook["type"] == color + "R" and not rook["moved"]:
+                if all(board[from_r][c] is None for c in range(1, from_c)):
+                    if not is_king_in_check(board, color, buffs):
+                        temp_board = copy_board(board); temp_board[from_r][from_c - 1] = temp_board[from_r][from_c]; temp_board[from_r][from_c] = None
+                        if not is_king_in_check(temp_board, color, buffs): return True
+        return False
+
+    if piece_type == "R":
+        if dr != 0 and dc != 0: return False
+        step_r = (dr > 0) - (dr < 0); step_c = (dc > 0) - (dc < 0)
+        curr_r, curr_c = from_r + step_r, from_c + step_c
+        while (curr_r, curr_c) != (to_r, to_c):
+            if board[curr_r][curr_c] is not None: return False
+            curr_r += step_r; curr_c += step_c
+        return True
+        
+    if piece_type == "B":
+        if abs(dr) != abs(dc): return False
+        step_r = (dr > 0) - (dr < 0); step_c = (dc > 0) - (dc < 0)
+        curr_r, curr_c = from_r + step_r, from_c + step_c
+        while (curr_r, curr_c) != (to_r, to_c):
+            if board[curr_r][curr_c] is not None: return False
+            curr_r += step_r; curr_c += step_c
+        return True
+
+    if piece_type == "Q":
+        if dr != 0 and dc != 0 and abs(dr) != abs(dc): return False
+        step_r = (dr > 0) - (dr < 0); step_c = (dc > 0) - (dc < 0)
+        curr_r, curr_c = from_r + step_r, from_c + step_c
+        while (curr_r, curr_c) != (to_r, to_c):
+            if board[curr_r][curr_c] is not None: return False
+            curr_r += step_r; curr_c += step_c
+        return True
+
+    if piece_type == "N":
+        return (abs(dr) == 2 and abs(dc) == 1) or (abs(dr) == 1 and abs(dc) == 2)
+
+    if piece_type == "P":
+        direction = -1 if color == "w" else 1
+        start_row = 6 if color == "w" else 1
+        can_move_2 = buffs and "pawn_rush" in buffs.get(color, [])
+        cruel = buffs and "cruel_pawns" in buffs.get(color, [])
+        peaceful = buffs and "peaceful_pawns" in buffs.get(color, [])
+        
+        if dc == 0 and dr == direction: return target is None
+        if dc == 0 and dr == 2 * direction and (from_r == start_row or can_move_2):
+            mid_r = from_r + direction
+            return board[mid_r][from_c] is None and target is None
+        if abs(dc) == 1 and dr == direction:
+            if peaceful: return False
+            if target is not None and target["type"][0] != color: return True
+            if target is None and last_move:
+                if last_move["from_r"] == from_r + direction * -2 and last_move["from_c"] == to_c:
+                    if board[from_r][to_c] and board[from_r][to_c]["type"][1] == "P": return True
+        if cruel:
+            if dc in [-1, 0, 1] and dr == direction:
+                return target is None or target["type"][0] != color
+    return False
+
+def is_king_in_check(board, color, buffs=None):
+    king_pos = find_king(board, color)
+    if not king_pos: return False
+    enemy_color = "b" if color == "w" else "w"
+    for r in range(8):
+        for c in range(8):
+            piece = board[r][c]
+            if piece and piece["type"][0] == enemy_color and piece.get("frozen", 0) == 0:
+                if is_valid_move(board, r, c, king_pos[0], king_pos[1], None, buffs):
+                    return True
+    return False
+
+def is_checkmate_or_stalemate(board, color, last_move, buffs):
+    for r in range(8):
+        for c in range(8):
+            piece = board[r][c]
+            if piece and piece["type"][0] == color and piece.get("frozen", 0) == 0:
+                for tr in range(8):
+                    for tc in range(8):
+                        if is_valid_move(board, r, c, tr, tc, last_move, buffs):
+                            temp_board = copy_board(board)
+                            temp_board[tr][tc] = temp_board[r][c]
+                            temp_board[r][c] = None
+                            if not is_king_in_check(temp_board, color, buffs):
+                                return False
+    if is_king_in_check(board, color, buffs): return "checkmate"
+    else: return "stalemate"
+
+# ==========================================
+# 4. ОТРИСОВКА
+# ==========================================
+def draw_button(screen, rect, text, font, mouse_pos, disabled=False):
+    if disabled: pygame.draw.rect(screen, BTN_DISABLED, rect, border_radius=10)
+    else:
+        color = BTN_HOVER if rect.collidepoint(mouse_pos) else BTN_COLOR
+        pygame.draw.rect(screen, color, rect, border_radius=10)
+    text_color = (100, 100, 100) if disabled else TEXT_COLOR
+    text_surf = font.render(text, True, text_color)
+    screen.blit(text_surf, text_surf.get_rect(center=rect.center))
+
+def draw_menu(screen, font_title, font_btn):
+    screen.fill(BG_COLOR)
+    title_surf = font_title.render("Шахматы Resjka", True, TEXT_COLOR)
+    screen.blit(title_surf, title_surf.get_rect(center=(SCREEN_W // 2, SCREEN_H // 3)))
+    btn_rect = pygame.Rect(0, 0, 300, 80); btn_rect.center = (SCREEN_W // 2, SCREEN_H // 2 + 50)
+    draw_button(screen, btn_rect, "ИГРАТЬ", font_btn, pygame.mouse.get_pos())
+    return btn_rect
+
+def draw_game_over(screen, font_title, font_btn, end_message):
+    s = pygame.Surface((SCREEN_W, SCREEN_H)); s.set_alpha(220); s.fill((0, 0, 0)); screen.blit(s, (0, 0))
+    over_surf = font_title.render(end_message, True, (255, 255, 255))
+    screen.blit(over_surf, over_surf.get_rect(center=(SCREEN_W // 2, SCREEN_H // 3)))
+    btn_play_again = pygame.Rect(0, 0, 250, 70); btn_play_again.center = (SCREEN_W // 2 - 150, SCREEN_H // 2 + 100)
+    draw_button(screen, btn_play_again, "ИГРАТЬ", font_btn, pygame.mouse.get_pos())
+    btn_rematch = pygame.Rect(0, 0, 250, 70); btn_rematch.center = (SCREEN_W // 2 + 150, SCREEN_H // 2 + 100)
+    draw_button(screen, btn_rematch, "РЕВАНШ", font_btn, pygame.mouse.get_pos())
+    return btn_play_again, btn_rematch
+
+def draw_game(screen, state_data, font_title, font_info, font_coords, font_cjk_small):
+    board = state_data["board"]; selected = state_data["selected"]; valid_moves = state_data["valid_moves"]
+    turn = state_data["turn"]; check_status = state_data["check_status"]; check_alpha = state_data["check_alpha"]
+    items = state_data["items"]; is_book_open = state_data["is_book_open"]
+    proj_anim = state_data.get("proj_anim", None); bomb_anim = state_data.get("bomb_anim", None)
+    buffs = state_data["buffs"]; blind_turns = state_data.get("blind_turns", 0)
+    frozen_zones = state_data["frozen_zones"]; teleports = state_data["teleports"]
+    trip_mode = state_data.get("trip_mode", False); targeting_spell = state_data.get("targeting_spell", None)
+    used_spells = state_data.get("used_spells", set()); move_counter = state_data.get("move_counter", 1)
+    last_spell_info = state_data.get("last_spell_info", "")
+    mouse_pos = pygame.mouse.get_pos()
+    
+    if trip_mode: screen.fill((random.randint(0,255), random.randint(0,255), random.randint(0,255)))
+    else: screen.fill(BG_COLOR)
+    
+    # 1. РАДИУС СПОСОБНОСТЕЙ
+    hover_r, hover_c = None, None
+    if targeting_spell and (BOARD_X <= mouse_pos[0] < BOARD_X + BOARD_W and BOARD_Y <= mouse_pos[1] < BOARD_Y + BOARD_H):
+        hover_c = (mouse_pos[0] - BOARD_X) // CELL_SIZE
+        hover_r = (mouse_pos[1] - BOARD_Y) // CELL_SIZE
+    
+    if targeting_spell and hover_r is not None:
+        s_type = targeting_spell[1]
+        s_overlay = pygame.Surface((CELL_SIZE, CELL_SIZE), pygame.SRCALPHA)
+        s_overlay.fill((255, 50, 50, 120))
+        if s_type in ["bombard_row", "bombard_col"]:
+            for c in range(8): screen.blit(s_overlay, (BOARD_X + c*CELL_SIZE, BOARD_Y + hover_r*CELL_SIZE))
+            for r in range(8): screen.blit(s_overlay, (BOARD_X + hover_c*CELL_SIZE, BOARD_Y + r*CELL_SIZE))
+        elif s_type in ["freeze", "bomb"]:
+            for fr in range(hover_r - 1, hover_r + 2):
+                for fc in range(hover_c - 1, hover_c + 2):
+                    if 0 <= fr < 8 and 0 <= fc < 8:
+                        screen.blit(s_overlay, (BOARD_X + fc*CELL_SIZE, BOARD_Y + fr*CELL_SIZE))
+
+    # 2. ДОСКА
+    for r in range(BOARD_SIZE):
+        for c in range(BOARD_SIZE):
+            if trip_mode: color = (random.randint(0,255), random.randint(0,255), random.randint(0,255))
+            else: color = LIGHT if (r + c) % 2 == 0 else DARK
+            pygame.draw.rect(screen, color, (BOARD_X + c*CELL_SIZE, BOARD_Y + r*CELL_SIZE, CELL_SIZE, CELL_SIZE))
+
+    # 3. РАЗМЕТКА
+    letters = ["a", "b", "c", "d", "e", "f", "g", "h"]
+    if trip_mode: random.shuffle(letters)
+    for i in range(BOARD_SIZE):
+        screen.blit(font_coords.render(letters[i], True, TEXT_COLOR), font_coords.render(letters[i], True, TEXT_COLOR).get_rect(center=(BOARD_X + i*CELL_SIZE + CELL_SIZE//2, BOARD_Y + BOARD_H + 20)))
+        screen.blit(font_coords.render(str(8 - i), True, TEXT_COLOR), font_coords.render(str(8 - i), True, TEXT_COLOR).get_rect(center=(BOARD_X - 20, BOARD_Y + i*CELL_SIZE + CELL_SIZE//2)))
+
+    # 4. ТАЙМЕРЫ И СЧЕТЧИК
+    timer_font = pygame.font.SysFont("Arial", 18)
+    time_left_armor = max(0, ARMOR_SPAWN_TIME - (time.time() - state_data["last_armor_spawn"]))
+    time_left_bomb = max(0, BOMB_SPAWN_TIME - (time.time() - state_data["last_bomb_spawn"]))
+    screen.blit(timer_font.render(f"Броня: {int(time_left_armor)}с", True, (150, 150, 150)), (BOARD_X - 150, BOARD_Y + 50))
+    screen.blit(timer_font.render(f"Снаряд: {int(time_left_bomb)}с", True, (200, 50, 50)), (BOARD_X - 150, BOARD_Y + 80))
+    screen.blit(timer_font.render(f"Ход: {move_counter}", True, TEXT_COLOR), (BOARD_X - 150, BOARD_Y - 30))
+
+    # 5. ПОДСВЕТКА ХОДОВ
+    if selected is not None:
+        r, c = selected
+        pygame.draw.rect(screen, HIGHLIGHT_SELECTED, (BOARD_X + c*CELL_SIZE, BOARD_Y + r*CELL_SIZE, CELL_SIZE, CELL_SIZE), 4)
+
+    for (r, c) in valid_moves:
+        center = (BOARD_X + c*CELL_SIZE + CELL_SIZE//2, BOARD_Y + r*CELL_SIZE + CELL_SIZE//2)
+        if board[r][c] is None:
+            pygame.draw.circle(screen, (100, 100, 100, 150), center, CELL_SIZE//6)
+        else:
+            pygame.draw.circle(screen, (200, 50, 50, 150), center, CELL_SIZE//2 - 4, 6)
+
+    # 6. ТЕЛЕПОРТЫ
+    for tp in teleports:
+        center = (BOARD_X + tp[1]*CELL_SIZE + CELL_SIZE//2, BOARD_Y + tp[0]*CELL_SIZE + CELL_SIZE//2)
+        pygame.draw.circle(screen, (50, 50, 255), center, CELL_SIZE//2 - 4, 4)
+        pygame.draw.circle(screen, (50, 50, 255), center, CELL_SIZE//3, 2)
+
+    # 7. ПРЕДМЕТЫ
+    for item in items:
+        center = (BOARD_X + item["c"]*CELL_SIZE + CELL_SIZE//2, BOARD_Y + item["r"]*CELL_SIZE + CELL_SIZE//2)
+        if item["type"] == "armor":
+            pygame.draw.circle(screen, (150, 150, 150), center, CELL_SIZE//3)
+            pygame.draw.circle(screen, (100, 100, 100), center, CELL_SIZE//3, 2)
+        elif item["type"] == "bomb":
+            pygame.draw.circle(screen, (200, 50, 50), center, CELL_SIZE//3)
+            pygame.draw.circle(screen, (100, 0, 0), center, CELL_SIZE//3, 2)
+
+    # 8. ФИГУРЫ
+    for r in range(BOARD_SIZE):
+        for c in range(BOARD_SIZE):
+            piece = board[r][c]
+            if piece is None: continue
+            if blind_turns > 0: continue
+                
+            center = (BOARD_X + c*CELL_SIZE + CELL_SIZE//2, BOARD_Y + r*CELL_SIZE + CELL_SIZE//2)
+            if piece["armor"] > 0:
+                pygame.draw.circle(screen, (180, 180, 180), center, CELL_SIZE//2 - 2, 4)
+            if piece["type"] in IMAGES:
+                screen.blit(IMAGES[piece["type"]], (BOARD_X + c*CELL_SIZE, BOARD_Y + r*CELL_SIZE))
+            if piece.get("projectile", False):
+                pygame.draw.circle(screen, (255, 50, 50), (center[0], center[1] - CELL_SIZE//3), CELL_SIZE//10)
+            if piece.get("gold_projectile", False):
+                pygame.draw.circle(screen, (255, 215, 0), (center[0], center[1] - CELL_SIZE//3), CELL_SIZE//10)
+
+    # 9. ЗАМОРОЖЕННЫЕ ЗОНЫ
+    for fz in frozen_zones:
+        for fr in range(fz["r"], fz["r"]+3):
+            for fc in range(fz["c"], fz["c"]+3):
+                if 0 <= fr < 8 and 0 <= fc < 8:
+                    s = pygame.Surface((CELL_SIZE, CELL_SIZE), pygame.SRCALPHA)
+                    s.fill((0, 255, 255, 100))
+                    screen.blit(s, (BOARD_X + fc*CELL_SIZE, BOARD_Y + fr*CELL_SIZE))
+                    
+    # 10. АНИМАЦИЯ СНАРЯДА
+    if proj_anim:
+        start_pos = (BOARD_X + proj_anim["from_c"]*CELL_SIZE + CELL_SIZE//2, BOARD_Y + proj_anim["from_r"]*CELL_SIZE + CELL_SIZE//2)
+        end_pos = (BOARD_X + proj_anim["to_c"]*CELL_SIZE + CELL_SIZE//2, BOARD_Y + proj_anim["to_r"]*CELL_SIZE + CELL_SIZE//2)
+        t = proj_anim["progress"]
+        curr_x = start_pos[0] + (end_pos[0] - start_pos[0]) * t
+        curr_y = start_pos[1] + (end_pos[1] - start_pos[1]) * t
+        pygame.draw.circle(screen, proj_anim["color"], (int(curr_x), int(curr_y)), CELL_SIZE//6)
+        
+    # 10.5 АНИМАЦИЯ БОМБАРДИРОВКИ
+    if bomb_anim:
+        start_pos = (BOARD_X + bomb_anim["from_c"]*CELL_SIZE + CELL_SIZE//2, BOARD_Y + bomb_anim["from_r"]*CELL_SIZE + CELL_SIZE//2)
+        t = bomb_anim["progress"]
+        target_r, target_c = bomb_anim["to_r"], bomb_anim["to_c"]
+        target_pos = (BOARD_X + target_c*CELL_SIZE + CELL_SIZE//2, BOARD_Y + target_r*CELL_SIZE + CELL_SIZE//2)
+        
+        curr_x = start_pos[0] + (target_pos[0] - start_pos[0]) * t
+        curr_y = start_pos[1] + (target_pos[1] - start_pos[1]) * t
+        pygame.draw.circle(screen, (255, 100, 0), (int(curr_x), int(curr_y)), CELL_SIZE//4)
+
+    # 11. ИНТЕРФЕЙС
+    title_surf = font_title.render("Шахматы Resjka", True, TEXT_COLOR)
+    screen.blit(title_surf, title_surf.get_rect(center=(SCREEN_W // 2, 40)))
+
+    turn_text = "Ход белых" if turn == "w" else "Ход черных"
+    turn_color = (255, 255, 255) if turn == "w" else (150, 150, 150)
+    screen.blit(font_info.render(turn_text, True, turn_color), font_info.render(turn_text, True, turn_color).get_rect(center=(SCREEN_W // 2, SCREEN_H - 60)))
+    
+    if check_status and check_alpha > 0:
+        font_big = pygame.font.SysFont("Arial", 120, bold=True)
+        check_surf = font_big.render("ШАХ!", True, (255, 0, 0))
+        check_surf.set_alpha(check_alpha)
+        screen.blit(check_surf, check_surf.get_rect(center=(SCREEN_W // 2, SCREEN_H // 2)))
+        
+    # 12. КНИГА И ПАНЕЛЬ
+    book_rect = pygame.Rect(BOOK_X, BOOK_Y, BOOK_W, BOOK_H)
+    if "chessbook" in IMAGES: screen.blit(IMAGES["chessbook"], book_rect)
+
+    panel_rect = pygame.Rect(PANEL_X, PANEL_Y, PANEL_W, PANEL_H)
+    pygame.draw.rect(screen, PANEL_COLOR, panel_rect)
+    pygame.draw.rect(screen, (100, 100, 100), panel_rect, 2)
+
+    # Отрисовка описания способности на панели
+    if last_spell_info:
+        # Разделяем на название и описание по тире (если есть)
+        if " — " in last_spell_info:
+            name, desc = last_spell_info.split(" — ", 1)
+        else:
+            name, desc = last_spell_info, ""
+            
+        name_surf = font_info.render(name, True, (255, 255, 100))
+        screen.blit(name_surf, (PANEL_X + 10, PANEL_Y + 10))
+        
+        if desc:
+            words = desc.split()
+            lines = []
+            curr_line = ""
+            for w in words:
+                test_line = curr_line + w + " "
+                if font_info.size(test_line)[0] < PANEL_W - 20:
+                    curr_line = test_line
+                else:
+                    lines.append(curr_line)
+                    curr_line = w + " "
+            lines.append(curr_line)
+            
+            for i, line in enumerate(lines):
+                log_surf = font_info.render(line, True, TEXT_COLOR)
+                screen.blit(log_surf, (PANEL_X + 10, PANEL_Y + 50 + i*30))
+
+    # 13. МЕНЮ КНИГИ
+    if is_book_open:
+        dark_surf = pygame.Surface((SCREEN_W, SCREEN_H)); dark_surf.set_alpha(180); dark_surf.fill((0, 0, 0)); screen.blit(dark_surf, (0, 0))
+        menu_rect = pygame.Rect(SCREEN_W//2 - 300, SCREEN_H//2 - 200, 600, 400)
+        pygame.draw.rect(screen, PANEL_COLOR, menu_rect)
+        pygame.draw.rect(screen, (255, 255, 255), menu_rect, 3)
+        
+        spell_rects = []
+        if "available_spells" in state_data:
+            for i, spell in enumerate(state_data["available_spells"]):
+                char, s_type, desc = spell
+                col = i % 3; row = i // 3
+                btn_rect = pygame.Rect(menu_rect.x + 50 + col*180, menu_rect.y + 50 + row*150, 150, 100)
+                is_used = char in used_spells
+                if is_used: pygame.draw.rect(screen, BTN_DISABLED, btn_rect, border_radius=10)
+                else: pygame.draw.rect(screen, BTN_HOVER if btn_rect.collidepoint(mouse_pos) else BTN_COLOR, btn_rect, border_radius=10)
+                
+                char_surf = font_title.render(char, True, (100, 100, 100) if is_used else TEXT_COLOR)
+                screen.blit(char_surf, char_surf.get_rect(center=(btn_rect.centerx, btn_rect.centery - 15)))
+                
+                if is_used:
+                    pygame.draw.line(screen, (255, 0, 0), btn_rect.topleft, btn_rect.bottomright, 3)
+                    pygame.draw.line(screen, (255, 0, 0), btn_rect.topright, btn_rect.bottomleft, 3)
+                spell_rects.append((btn_rect, spell, is_used))
+        return spell_rects
+    return []
+
+def draw_promotion_menu(screen, font_title, font_btn, color):
+    s = pygame.Surface((SCREEN_W, SCREEN_H)); s.set_alpha(200); s.fill((0, 0, 0)); screen.blit(s, (0, 0))
+    menu_rect = pygame.Rect(SCREEN_W//2 - 200, SCREEN_H//2 - 75, 400, 150)
+    pygame.draw.rect(screen, PANEL_COLOR, menu_rect)
+    pygame.draw.rect(screen, (255, 255, 255), menu_rect, 3)
+    title_surf = font_title.render("Выберите фигуру", True, TEXT_COLOR)
+    screen.blit(title_surf, title_surf.get_rect(center=(menu_rect.centerx, menu_rect.top - 40)))
+    options = ["Q", "R", "B", "N"]
+    btn_size = 80; total_w = len(options) * (btn_size + 20) - 20
+    start_x = menu_rect.centerx - total_w // 2
+    btn_rects = []
+    for i, opt in enumerate(options):
+        btn_rect = pygame.Rect(start_x + i*(btn_size+20), menu_rect.top + 30, btn_size, btn_size)
+        pygame.draw.rect(screen, BTN_COLOR, btn_rect, border_radius=10)
+        piece_type = color + opt
+        if piece_type in IMAGES:
+            screen.blit(IMAGES[piece_type], IMAGES[piece_type].get_rect(center=btn_rect.center))
+        btn_rects.append((btn_rect, opt))
+    return btn_rects
+
+# ==========================================
+# 5. СПОСОБНОСТИ
+# ==========================================
+def apply_spell(spell_type, board, turn, buffs, state_data, target1=None, target2=None):
+    color = turn
+    
+    if spell_type == "teleport":
+        state_data["teleports"] = [target1, target2]
+        
+    elif spell_type == "give_projectile":
+        r, c = target1
+        if board[r][c]: board[r][c]["projectile"] = True
+        
+    elif spell_type == "kill_any":
+        r, c = target1
+        if board[r][c] and board[r][c]["type"][1] != "K":
+            board[r][c] = None
+        
+    elif spell_type == "swap":
+        r1, c1 = target1; r2, c2 = target2
+        if board[r1][c1] and board[r2][c2]:
+            if board[r1][c1]["type"][1] != "K" and board[r2][c2]["type"][1] != "K":
+                temp = copy_board(board)
+                temp[r1][c1], temp[r2][c2] = temp[r2][c2], temp[r1][c1]
+                if not is_king_in_check(temp, color, buffs):
+                    board[r1][c1], board[r2][c2] = board[r2][c2], board[r1][c1]
+        
+    elif spell_type == "rewind":
+        if len(state_data["history"]) >= 3:
+            state_data["board"] = state_data["history"][-3]["board"]
+            state_data["turn"] = state_data["history"][-3]["turn"]
+            state_data["move_counter"] = max(1, state_data["move_counter"] - 3)
+            state_data["history"] = state_data["history"][:-3]
+        
+    elif spell_type == "pawn_rush":
+        buffs[color].append("pawn_rush")
+        
+    elif spell_type == "cruel_pawns":
+        buffs[color].append("cruel_pawns")
+        
+    elif spell_type == "peaceful_pawns":
+        buffs[color].append("peaceful_pawns")
+        
+    elif spell_type == "bombard_row":
+        r = target1[0]
+        can_attack = True
+        for c in range(8):
+            if board[r][c] and board[r][c]["type"][1] == "K":
+                can_attack = False
+                break
+        if can_attack:
+            king_pos = find_king(board, color)
+            if king_pos:
+                state_data["bomb_anim"] = {"from_r": king_pos[0], "from_c": king_pos[1], "to_r": r, "to_c": target1[1], "progress": 0.0}
+            for c in range(8):
+                if board[r][c]: board[r][c] = None
+        
+    elif spell_type == "bombard_col":
+        c = target1[1]
+        can_attack = True
+        for r in range(8):
+            if board[r][c] and board[r][c]["type"][1] == "K":
+                can_attack = False
+                break
+        if can_attack:
+            king_pos = find_king(board, color)
+            if king_pos:
+                state_data["bomb_anim"] = {"from_r": king_pos[0], "from_c": king_pos[1], "to_r": target1[0], "to_c": c, "progress": 0.0}
+            for r in range(8):
+                if board[r][c]: board[r][c] = None
+        
+    elif spell_type == "freeze":
+        r, c = target1
+        r_start = max(0, r - 1)
+        c_start = max(0, c - 1)
+        state_data["frozen_zones"].append({"r": r_start, "c": c_start, "turns": 2})
+        for fr in range(r_start, r_start+3):
+            for fc in range(c_start, c_start+3):
+                if 0 <= fr < 8 and 0 <= fc < 8 and board[fr][fc]:
+                    board[fr][fc]["frozen"] = 2
+        
+    elif spell_type == "bomb":
+        r, c = target1
+        r_start = max(0, r - 1)
+        c_start = max(0, c - 1)
+        can_attack = True
+        for fr in range(r_start, r_start+3):
+            for fc in range(c_start, c_start+3):
+                if 0 <= fr < 8 and 0 <= fc < 8 and board[fr][fc]:
+                    if board[fr][fc]["type"][1] == "K":
+                        can_attack = False
+        if can_attack:
+            king_pos = find_king(board, color)
+            if king_pos:
+                state_data["bomb_anim"] = {"from_r": king_pos[0], "from_c": king_pos[1], "to_r": r, "to_c": c, "progress": 0.0}
+            for fr in range(r_start, r_start+3):
+                for fc in range(c_start, c_start+3):
+                    if 0 <= fr < 8 and 0 <= fc < 8 and board[fr][fc]:
+                        board[fr][fc] = None
+        
+    elif spell_type == "fortune":
+        r, c = target1
+        if board[r][c] and board[r][c]["type"][1] != "K":
+            if random.random() < 0.5:
+                new_piece = board[r][c].copy()
+                free_spots = [(rr, cc) for rr in range(8) for cc in range(8) if board[rr][cc] is None]
+                if free_spots:
+                    rr, cc = random.choice(free_spots)
+                    board[rr][cc] = new_piece
+            else:
+                board[r][c] = None
+                
+    elif spell_type == "nothing":
+        pass
+        
+    elif spell_type == "trip":
+        state_data["trip_mode"] = not state_data.get("trip_mode", False)
+        
+    elif spell_type == "betrayal":
+        for r in range(8):
+            for c in range(8):
+                if board[r][c] and board[r][c]["type"] == color + "Q":
+                    board[r][c] = None
+        
+    elif spell_type == "friendship":
+        state_data["game_over"] = True
+        state_data["end_message"] = "ДРУЖБА! Ничья."
+        
+    elif spell_type == "blindness":
+        state_data["blind_turns"] = 2
+        
+    elif spell_type == "gold":
+        r, c = target1
+        if board[r][c]:
+            board[r][c]["gold_projectile"] = True
+            board[r][c]["armor"] = 2
+        
+    elif spell_type == "genghis":
+        for r in range(8):
+            for c in range(8):
+                if board[r][c] and board[r][c]["type"][0] == color and board[r][c]["type"][1] != "K":
+                    board[r][c]["type"] = color + "N"
+
+    return True 
+
+# ==========================================
+# 6. ГЛАВНЫЙ ЦИКЛ
+# ==========================================
+def main():
+    pygame.init()
+    screen = pygame.display.set_mode((SCREEN_W, SCREEN_H), pygame.FULLSCREEN)
+    pygame.display.set_caption("My Chess")
+    clock = pygame.time.Clock()
+
+    load_images(CELL_SIZE)
+
+    font_title = get_cjk_font(60, bold=True)
+    font_btn = get_cjk_font(36, bold=True)
+    font_info = get_cjk_font(24)
+    font_coords = get_cjk_font(24, bold=True)
+    font_cjk_small = get_cjk_font(18)
+    
+    state = STATE_MENU
+    
+    board = []
+    selected = None
+    valid_moves = []
+    turn = "w"
+    game_over = False
+    end_message = ""
+    check_status = False
+    check_alpha = 0
+    items = []
+    
+    last_armor_spawn = time.time()
+    last_bomb_spawn = time.time()
+    is_book_open = False
+    
+    proj_anim = None
+    bomb_anim = None
+    last_move = None
+    promotion_pos = None
+    promotion_rects = []
+    
+    buffs = {"w": [], "b": []}
+    history = []
+    available_spells = []
+    spell_rects = []
+    used_spells = set()
+    move_counter = 1
+    last_spell_info = ""
+    
+    blind_turns = 0
+    frozen_zones = []
+    teleports = []
+    trip_mode = False
+    
+    targeting_spell = None
+    target1 = None
+    target2 = None
+
+    running = True
+    while running:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                if state == STATE_MENU: running = False
+                elif state == STATE_PLAYING: state = STATE_MENU
+                elif state == STATE_GAME_OVER: state = STATE_MENU
+
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                mx, my = event.pos
+                
+                if proj_anim is not None: continue
+
+                if state == STATE_MENU:
+                    btn_rect = pygame.Rect(0, 0, 300, 80)
+                    btn_rect.center = (SCREEN_W // 2, SCREEN_H // 2 + 50)
+                    if btn_rect.collidepoint(mx, my):
+                        board = make_start_board()
+                        selected = None; valid_moves = []; turn = "w"
+                        game_over = False; check_status = False; check_alpha = 0; items = []
+                        last_armor_spawn = time.time(); last_bomb_spawn = time.time()
+                        last_move = None; buffs = {"w": [], "b": []}; history = []
+                        available_spells = random.sample(ALL_SPELLS, 6); used_spells = set()
+                        blind_turns = 0; frozen_zones = []; teleports = []; trip_mode = False
+                        bomb_anim = None; move_counter = 1; last_spell_info = ""
+                        state = STATE_PLAYING
+                        continue
+
+                elif state == STATE_GAME_OVER:
+                    btn_play_again = pygame.Rect(0, 0, 250, 70)
+                    btn_play_again.center = (SCREEN_W // 2 - 150, SCREEN_H // 2 + 100)
+                    btn_rematch = pygame.Rect(0, 0, 250, 70)
+                    btn_rematch.center = (SCREEN_W // 2 + 150, SCREEN_H // 2 + 100)
+                    
+                    if btn_play_again.collidepoint(mx, my):
+                        state = STATE_MENU
+                    elif btn_rematch.collidepoint(mx, my):
+                        board = make_start_board()
+                        selected = None; valid_moves = []; turn = "w"
+                        game_over = False; check_status = False; check_alpha = 0; items = []
+                        last_armor_spawn = time.time(); last_bomb_spawn = time.time()
+                        last_move = None; buffs = {"w": [], "b": []}; history = []
+                        available_spells = random.sample(ALL_SPELLS, 6); used_spells = set()
+                        blind_turns = 0; frozen_zones = []; teleports = []; trip_mode = False
+                        bomb_anim = None; move_counter = 1; last_spell_info = ""
+                        state = STATE_PLAYING
+                    continue
+
+                elif state == STATE_PLAYING:
+                    if targeting_spell:
+                        if BOARD_X <= mx < BOARD_X + BOARD_W and BOARD_Y <= my < BOARD_Y + BOARD_H:
+                            c = (mx - BOARD_X) // CELL_SIZE
+                            r = (my - BOARD_Y) // CELL_SIZE
+                            
+                            if target1 is None:
+                                target1 = (r, c)
+                                if targeting_spell[1] in ["give_projectile", "kill_any", "bombard_row", "bombard_col", "freeze", "bomb", "fortune", "gold"]:
+                                    apply_spell(targeting_spell[1], board, turn, buffs, {
+                                        "board": board, "turn": turn, "history": history, "frozen_zones": frozen_zones, 
+                                        "teleports": teleports, "blind_turns": blind_turns, "trip_mode": trip_mode,
+                                        "game_over": game_over, "end_message": end_message, "bomb_anim": bomb_anim,
+                                        "move_counter": move_counter, "last_spell_info": last_spell_info
+                                    }, target1)
+                                    used_spells.add(targeting_spell[0])
+                                    targeting_spell = None
+                                    target1 = None
+                                    turn = "b" if turn == "w" else "w"
+                                    move_counter += 1
+                                    status = is_checkmate_or_stalemate(board, turn, last_move, buffs)
+                                    if status == "checkmate":
+                                        game_over = True; state = STATE_GAME_OVER; end_message = "МАТ!"
+                                    elif status == "stalemate":
+                                        game_over = True; state = STATE_GAME_OVER; end_message = "ПАТ!"
+                                    continue
+                            elif target2 is None:
+                                target2 = (r, c)
+                                apply_spell(targeting_spell[1], board, turn, buffs, {
+                                        "board": board, "turn": turn, "history": history, "frozen_zones": frozen_zones, 
+                                        "teleports": teleports, "blind_turns": blind_turns, "trip_mode": trip_mode,
+                                        "game_over": game_over, "end_message": end_message, "bomb_anim": bomb_anim,
+                                        "move_counter": move_counter, "last_spell_info": last_spell_info
+                                    }, target1, target2)
+                                used_spells.add(targeting_spell[0])
+                                targeting_spell = None
+                                target1 = None; target2 = None
+                                turn = "b" if turn == "w" else "w"
+                                move_counter += 1
+                                continue
+                        continue
+
+                    if is_book_open:
+                        for rect, spell, is_used in spell_rects:
+                            if rect.collidepoint(mx, my) and not is_used:
+                                is_book_open = False
+                                last_spell_info = f"{spell[0]} — {spell[2]}"
+                                if spell[1] in ["nothing", "pawn_rush", "cruel_pawns", "peaceful_pawns", "rewind", "trip", "betrayal", "friendship", "blindness", "genghis"]:
+                                    apply_spell(spell[1], board, turn, buffs, {
+                                        "board": board, "turn": turn, "history": history, "frozen_zones": frozen_zones, 
+                                        "teleports": teleports, "blind_turns": blind_turns, "trip_mode": trip_mode,
+                                        "game_over": game_over, "end_message": end_message, "bomb_anim": bomb_anim,
+                                        "move_counter": move_counter, "last_spell_info": last_spell_info
+                                    })
+                                    used_spells.add(spell[0])
+                                    turn = "b" if turn == "w" else "w"
+                                    move_counter += 1
+                                else:
+                                    targeting_spell = spell
+                                    target1 = None; target2 = None
+                                break
+                        else:
+                            is_book_open = False
+                        continue
+                    
+                    book_rect = pygame.Rect(BOOK_X, BOOK_Y, BOOK_W, BOOK_H)
+                    if book_rect.collidepoint(mx, my):
+                        is_book_open = True
+                        continue
+                        
+                    if targeting_spell:
+                        targeting_spell = None
+                        target1 = None; target2 = None
+                        continue
+
+                    if not game_over and (BOARD_X <= mx < BOARD_X + BOARD_W and BOARD_Y <= my < BOARD_Y + BOARD_H):
+                        c = (mx - BOARD_X) // CELL_SIZE
+                        r = (my - BOARD_Y) // CELL_SIZE
+                        piece = board[r][c]
+                        
+                        if piece is not None and piece["type"][0] == turn and piece.get("frozen", 0) == 0:
+                            selected = (r, c)
+                            valid_moves = []
+                            for tr in range(8):
+                                for tc in range(8):
+                                    if is_valid_move(board, r, c, tr, tc, last_move, buffs, teleports):
+                                        temp_board = copy_board(board)
+                                        temp_board[tr][tc] = temp_board[r][c]
+                                        temp_board[r][c] = None
+                                        if not is_king_in_check(temp_board, turn, buffs):
+                                            valid_moves.append((tr, tc))
+                                            
+                        elif selected is not None and (r, c) in valid_moves:
+                            target = board[r][c]
+                            mover = board[selected[0]][selected[1]]
+                            
+                            if random.random() < 0.0009:
+                                board[selected[0]][selected[1]] = None
+                                if mover["type"][1] == "K":
+                                    game_over = True; state = STATE_GAME_OVER; end_message = "КОРОЛЬ СПОТКНУЛСЯ!"
+                                else:
+                                    turn = "b" if turn == "w" else "w"
+                                    move_counter += 1
+                                selected = None; valid_moves = []
+                                continue
+
+                            history.append({"board": copy_board(board), "turn": turn, "move_counter": move_counter})
+                            
+                            if mover["type"][1] == "K" and abs(c - selected[1]) == 2:
+                                if c == 6: board[selected[0]][5] = board[selected[0]][7]; board[selected[0]][7] = None
+                                elif c == 2: board[selected[0]][3] = board[selected[0]][0]; board[selected[0]][0] = None
+                            
+                            if mover["type"][1] == "P" and target is None and selected[1] != c:
+                                board[selected[0]][c] = None
+                            
+                            if mover.get("projectile", False) and target is not None:
+                                proj_anim = {"from_r": selected[0], "from_c": selected[1], "to_r": r, "to_c": c, "progress": 0.0, "color": (255, 0, 0)}
+                                mover["projectile"] = False
+                                selected = None; valid_moves = []
+                                
+                            elif mover.get("gold_projectile", False) and target is not None:
+                                proj_anim = {"from_r": selected[0], "from_c": selected[1], "to_r": r, "to_c": c, "progress": 0.0, "color": (255, 215, 0)}
+                                mover["gold_projectile"] = False
+                                selected = None; valid_moves = []
+                                
+                            elif target is not None and target["armor"] > 0:
+                                dr = r - selected[0]; dc = c - selected[1]
+                                step_r = (dr > 0) - (dr < 0); step_c = (dc > 0) - (dc < 0)
+                                new_r = r - step_r; new_c = c - step_c
+                                
+                                if board[new_r][new_c] is None:
+                                    board[new_r][new_c] = mover
+                                    board[selected[0]][selected[1]] = None
+                                    target["armor"] -= 1
+                                    
+                                    selected = None; valid_moves = []
+                                    turn = "b" if turn == "w" else "w"
+                                    move_counter += 1
+                                    new_check = is_king_in_check(board, turn, buffs)
+                                    if new_check and not check_status: check_alpha = 255
+                                    check_status = new_check
+                                    
+                                    status = is_checkmate_or_stalemate(board, turn, last_move, buffs)
+                                    if status == "checkmate":
+                                        game_over = True; state = STATE_GAME_OVER; end_message = "МАТ!"
+                                    elif status == "stalemate":
+                                        game_over = True; state = STATE_GAME_OVER; end_message = "ПАТ!"
+                                else:
+                                    selected = None; valid_moves = []
+                                    
+                            else:
+                                if target is not None and target["type"][1] == "K":
+                                    pass
+                                else:
+                                    board[r][c] = mover
+                                    board[selected[0]][selected[1]] = None
+                                
+                                if mover["type"][1] == "P" and (r == 0 or r == 7):
+                                    promotion_pos = (r, c)
+                                    state = STATE_PROMOTION
+                                    last_move = {"from_r": selected[0], "from_c": selected[1], "to_r": r, "to_c": c}
+                                    selected = None; valid_moves = []
+                                    continue
+                                
+                                selected = None; valid_moves = []
+                                last_move = {"from_r": selected[0] if selected else -1, "from_c": -1, "to_r": r, "to_c": c}
+                                turn = "b" if turn == "w" else "w"
+                                move_counter += 1
+                                new_check = is_king_in_check(board, turn, buffs)
+                                if new_check and not check_status: check_alpha = 255
+                                check_status = new_check
+                                
+                                status = is_checkmate_or_stalemate(board, turn, last_move, buffs)
+                                if status == "checkmate":
+                                    game_over = True; state = STATE_GAME_OVER; end_message = "МАТ!"
+                                elif status == "stalemate":
+                                    game_over = True; state = STATE_GAME_OVER; end_message = "ПАТ!"
+
+                elif state == STATE_PROMOTION:
+                    for rect, opt in promotion_rects:
+                        if rect.collidepoint(mx, my):
+                            r, c = promotion_pos
+                            board[r][c]["type"] = turn + opt
+                            state = STATE_PLAYING
+                            turn = "b" if turn == "w" else "w"
+                            move_counter += 1
+                            new_check = is_king_in_check(board, turn, buffs)
+                            if new_check and not check_status: check_alpha = 255
+                            check_status = new_check
+                            status = is_checkmate_or_stalemate(board, turn, last_move, buffs)
+                            if status == "checkmate":
+                                game_over = True; state = STATE_GAME_OVER; end_message = "МАТ!"
+                            elif status == "stalemate":
+                                game_over = True; state = STATE_GAME_OVER; end_message = "ПАТ!"
+                            break
+
+        if state == STATE_PLAYING and not is_book_open and not targeting_spell:
+            current_time = time.time()
+            
+            if blind_turns > 0: blind_turns -= 1
+                
+            for fz in frozen_zones[:]:
+                fz["turns"] -= 1
+                if fz["turns"] <= 0:
+                    for fr in range(fz["r"], fz["r"]+3):
+                        for fc in range(fz["c"], fz["c"]+3):
+                            if 0 <= fr < 8 and 0 <= fc < 8 and board[fr][fc]:
+                                board[fr][fc]["frozen"] = 0
+                    frozen_zones.remove(fz)
+
+            if current_time - last_armor_spawn > ARMOR_SPAWN_TIME:
+                last_armor_spawn = current_time
+                rr = random.choice([3, 4]); cc = random.randint(0, 7)
+                if board[rr][cc] is None and not any(i["r"] == rr and i["c"] == cc for i in items):
+                    items.append({"r": rr, "c": cc, "type": "armor"})
+            
+            if current_time - last_bomb_spawn > BOMB_SPAWN_TIME:
+                last_bomb_spawn = current_time
+                rr = random.choice([3, 4]); cc = random.randint(0, 7)
+                if board[rr][cc] is None and not any(i["r"] == rr and i["c"] == cc for i in items):
+                    items.append({"r": rr, "c": cc, "type": "bomb"})
+
+            for item in items[:]:
+                for r in range(8):
+                    for c in range(8):
+                        if board[r][c] and r == item["r"] and c == item["c"]:
+                            if item["type"] == "armor": board[r][c]["armor"] = 2
+                            elif item["type"] == "bomb": board[r][c]["projectile"] = True
+                            items.remove(item)
+                            break
+
+            if check_alpha > 0:
+                check_alpha -= 5
+                if check_alpha < 0: check_alpha = 0
+                
+            if proj_anim is not None:
+                proj_anim["progress"] += 0.05
+                if proj_anim["progress"] >= 1.0:
+                    tr, tc = proj_anim["to_r"], proj_anim["to_c"]
+                    target = board[tr][tc]
+                    if target is not None:
+                        if proj_anim["color"] == (255, 215, 0):
+                            if target["type"][1] != "K": target["armor"] = 2
+                        else:
+                            if target["type"][1] != "K": board[tr][tc] = None
+                    
+                    turn = "b" if turn == "w" else "w"
+                    move_counter += 1
+                    new_check = is_king_in_check(board, turn, buffs)
+                    if new_check and not check_status: check_alpha = 255
+                    check_status = new_check
+                    
+                    status = is_checkmate_or_stalemate(board, turn, last_move, buffs)
+                    if status == "checkmate":
+                        game_over = True; state = STATE_GAME_OVER; end_message = "МАТ!"
+                    elif status == "stalemate":
+                        game_over = True; state = STATE_GAME_OVER; end_message = "ПАТ!"
+                    proj_anim = None
+                    
+            if bomb_anim is not None:
+                bomb_anim["progress"] += 0.05
+                if bomb_anim["progress"] >= 1.0:
+                    bomb_anim = None
+
+        if state == STATE_MENU:
+            draw_menu(screen, font_title, font_btn)
+        elif state in [STATE_PLAYING, STATE_GAME_OVER, STATE_PROMOTION]:
+            state_data = {
+                "board": board, "selected": selected, "valid_moves": valid_moves, "turn": turn,
+                "check_status": check_status, "check_alpha": check_alpha, "items": items,
+                "is_book_open": is_book_open, "last_armor_spawn": last_armor_spawn, "last_bomb_spawn": last_bomb_spawn,
+                "proj_anim": proj_anim, "bomb_anim": bomb_anim, "buffs": buffs, "blind_turns": blind_turns,
+                "frozen_zones": frozen_zones, "teleports": teleports, "trip_mode": trip_mode,
+                "available_spells": available_spells, "used_spells": used_spells, "targeting_spell": targeting_spell,
+                "move_counter": move_counter, "last_spell_info": last_spell_info
+            }
+            spell_rects = draw_game(screen, state_data, font_title, font_info, font_coords, font_cjk_small)
+            
+            if state == STATE_GAME_OVER:
+                draw_game_over(screen, font_title, font_btn, end_message)
+            elif state == STATE_PROMOTION:
+                promotion_rects = draw_promotion_menu(screen, font_title, font_btn, turn)
+
+        pygame.display.flip()
+        clock.tick(60)
+
+    pygame.quit()
+    sys.exit()
+
+if __name__ == "__main__":
+    main()

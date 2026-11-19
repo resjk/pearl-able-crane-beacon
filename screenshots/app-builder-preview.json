@@ -1,0 +1,36 @@
+{
+  "url": "http://127.0.0.1:8080/",
+  "viewports": {
+    "desktop": {
+      "width": 1280,
+      "height": 800,
+      "status": 200,
+      "title": "Шахматы Resjka",
+      "hasCanvas": false,
+      "bodyTextLen": 383,
+      "bodyTextHash": "cca4e9438a434ae79fabf774e9dc592c1fc02f8a9927269a5136d2ac180317da",
+      "bodyTextPrefix": "КНИГА ПЕЧАТЕЙ Шахматы Resjka Обычная партия, пока не откроете кн",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-preview.png"
+    },
+    "mobile": {
+      "width": 390,
+      "height": 844,
+      "status": 200,
+      "title": "Шахматы Resjka",
+      "hasCanvas": false,
+      "bodyTextLen": 383,
+      "bodyTextHash": "cca4e9438a434ae79fabf774e9dc592c1fc02f8a9927269a5136d2ac180317da",
+      "bodyTextPrefix": "КНИГА ПЕЧАТЕЙ Шахматы Resjka Обычная партия, пока не откроете кн",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-preview-mobile.png"
+    }
+  },
+  "brandWarnings": [],
+  "authWarnings": [],
+  "verdictFile": "/workspace/screenshots/app-builder-preview.json"
+}
